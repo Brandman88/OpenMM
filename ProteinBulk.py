@@ -1,31 +1,18 @@
-import os
-#import sys
-#print(sys.path)
-import hoomd
-import hoomd.md
-import gsd.hoomd
-import numpy as np
+from simtk.openmm import app
+import simtk.openmm as omm
+from simtk import unit
+import time
+import sys
+import argparse
+import build
+import force
 import pandas as pd
 
-#parameters='multi_run.dat'
-#num_run is first number, says how many runs are we doing?
-#start is the second number, says where we are in that list
-#marker is are we at the start or end of a task. default is S for starting
-
-#dest_file='1LC.txt'
-
-cur_dir=os.getcwd()
-dir_comp=f'{cur_dir}/completed_run'
-
-def find_Protein_length(dest_file_OLC='OneLetterCode.dat'):
-    seq_length = len(np.loadtxt('ThreeLetterCode.dat', dtype="U", unpack=True))
-    return seq_length
-        
-def read_entire_csv_return_dict(dest_required_file_csv = "data.csv"):
+def read_entire_csv_return_dict(dest_required_file_csv = "data_multi.csv"):
     '''Define function to read entire CSV and return a dictionary.'''
     # Using pandas to read the CSV file located at the destination provided.
     df = pd.read_csv(dest_required_file_csv)
-
+    df['letters_count'] = df['Sequence'].apply(len)
     # Converting the dataframe into a list of dictionaries where each dictionary represents a row of data.
     data = df.to_dict('records')
 
@@ -61,7 +48,6 @@ def row_specific_info_csv(column_name):
     # Return the specific column information
     return specific_csv_row_info
 
-# This function reads a multi-run parameter file and extracts the parameters from it.
 def read_multi_run(parameters='multi_run.dat'):
     # Open the specified parameter file.
     with open(parameters,'r') as para:
@@ -117,223 +103,162 @@ def read_multi_run(parameters='multi_run.dat'):
     # Return the number of runs, start value, marker, and the cleaned list of lines
     return num_run,start,marker,clean_list
 
-def box_size_equation():
-    est_box_size = int(((4.08744 * 10**-3) * find_Protein_length()**2.35278) + 207)
-    return est_box_size
+def get_equilibrium_data_forfeiture(parameters='multi_run.dat', filename='data_multi.csv'):
+    # Call the read_multi_run function to get the start value
+    num_run,start,marker,clean_list=read_multi_run()
+    
+    # Read the CSV file into a DataFrame
+    df = pd.read_csv(filename)
+    
+    # Get the row index based on the start value
+    row_index = start - 1
+    
+    # Get the value for the "Equilibrium Data Forfeiture" header
+    equilibrium_data_forfeiture = df.loc[row_index, 'Equilibrium Data Forfeiture']
+    
+    # Check if the value is empty or greater than or equal to 1
+    if equilibrium_data_forfeiture == "" or float(equilibrium_data_forfeiture) >= 100:
+        equilibrium_data_forfeiture = 70
+    
+    return equilibrium_data_forfeiture,num_run,start,marker,clean_list
 
-box_size=box_size_equation()
-hoomd.context.initialize("");
+equilibrium_data_forfeiture,num_run,start,marker,clean_list = get_equilibrium_data_forfeiture()  # The % of the data that will be sacrificed to claim equilibrium 
 
-# ========================= System Parameters =======================================
-ParticleN=find_Protein_length() #imports number of ParticleN
-dimen = 3
-# Box Dimentions
-BOX_L = box_size
 
-#kappa = 0.0
+def parse_arguments_from_csv(start,filename='data_multi.csv'):
+    TIME_STEP=0.01 #in Picoseconds
+    df = pd.read_csv(filename)
+    ParticleN=row_specific_info_csv('letters_count')
+    row_index = int(start) - 1  # Assuming start is a string representing the row number
+    arguments = df.iloc[row_index].to_dict()
 
-# ========================= Simulation Constants =======================================
-T_Kelvin=float(row_specific_info_csv('Absolute Temperature'))
-# In kJ units
-#KT = T_Kelvin*8.3145e-3 # Boltzmann constant in kJ/mol/K
-#EPSILON = 0.2 * 4.184 # kJ/mol
+    # Convert NaN values to None
+    arguments = {k: v if pd.notna(v) else None for k, v in arguments.items()}
 
-# In kCal units
-KT = T_Kelvin*0.001987204259 # Boltzmann constant in kCal/mol/K
-EPSILON = 0.2 # KCal/mol
+    frequency = arguments['Frequency']
+    frequency_default = 1000  # Set your desired default value here
 
-ionic_concentration = row_specific_info_csv('Ionic Concentration')
+    cutoff = arguments['Cutoff']
+    cutoff_default = 40.0  # Set your desired default value here
+    
+    trajectory = arguments['Trajectory']
+    trajectory_default = 'Running_Config.pdb'  # Set your desired default value here
+    
+    output = arguments['Output']
+    output_default = 'Running_Config.out'  # Set your desired default value here
 
-if isinstance(ionic_concentration, int):
-    ionic_concentration = int(ionic_concentration)  # Convert to int if it's already an integer
-elif isinstance(ionic_concentration, float):
-    ionic_concentration = float(ionic_concentration)  # Convert to float if it's already a float
+    number_of_steps = arguments['Number of Steps']
+    number_of_steps_default = int((3*(ParticleN)**2.2)/TIME_STEP)  # Set your desired default value here
+
+    
+    # Convert frequency to int or use the default value
+    frequency = int(frequency) if frequency is not None else frequency_default
+    arguments['Frequency'] = frequency
+
+    cutoff = float(cutoff) if cutoff is not None else cutoff_default
+    arguments['Cutoff'] = cutoff
+    
+    trajectory = trajectory if trajectory is not None else trajectory_default
+    arguments['Trajectory'] = trajectory
+    
+    output = output if output is not None else output_default
+    arguments['Output'] = output
+    
+    number_of_steps = number_of_steps if number_of_steps is not None else number_of_steps_default
+    arguments['Number of Steps'] = number_of_steps    
+    
+    return arguments
+
+
+
+KELVIN_TO_KT = unit.AVOGADRO_CONSTANT_NA * unit.BOLTZMANN_CONSTANT_kB / unit.kilocalorie_per_mole
+
+
+filename = 'data_multi.csv'  # Replace with your CSV file name
+
+arguments = parse_arguments_from_csv(start,filename)
+
+# Create an ArgumentParser object
+parser = argparse.ArgumentParser(description='Coarse-grained SOP_IDP simulation using OpenMM')
+
+# Add arguments from the CSV file
+parser.add_argument('-f', '--sequence', type=str, help='input sequence', default=arguments['Sequence'])
+parser.add_argument('-K', '--monovalent_concentration', type=float, default=float(arguments['Monovalent Concentration']),
+                    help='Monovalent concentration (mM) [150.0]')
+parser.add_argument('-c', '--cutoff', type=float, default=float(arguments['Cutoff']),
+                    help='Cutoff distance for electrostatics (A) [40.0]')
+parser.add_argument('-T', '--temperature', type=float, default=float(arguments['Absolute Temperature']),
+                    help='Temperature (K) [293.15]')
+parser.add_argument('-t', '--traj', type=str, default=arguments['Trajectory'],
+                    help='trajectory output')
+parser.add_argument('-o', '--output', type=str, default=arguments['Output'],
+                    help='status and energy output')
+parser.add_argument('-x', '--frequency', type=int, default=int(arguments['Frequency']),
+                    help='output frequency')
+parser.add_argument('-s', '--step', type=int, default=int(arguments['Number of Steps']),
+                    help='Number of step [10000]')
+
+args = parser.parse_args()
+
+class simu:    ### structure to group all simulation parameter
+    temp = 0.
+    Kconc = 0.
+    Nstep = 0
+    epsilon = 0.
+    cutoff = 40.
+
+simu.temp = (args.temperature)*unit.kelvin
+simu.Nstep = args.step
+simu.Kconc = args.monovalent_concentration
+simu.cutoff = args.cutoff
+
+equilibrium_steps=simu.Nstep*(equilibrium_data_forfeiture/100)
+steps_left=simu.Nstep-equilibrium_steps
+
+T_unitless = simu.temp * KELVIN_TO_KT
+print("T_unitless  ", T_unitless)
+simu.epsilon = 296.0736276 - 619.2813716 * T_unitless + 531.2826741 * T_unitless**2 - 180.0369914 * T_unitless**3;
+print("epsilon  ", simu.epsilon)
+simu.l_Bjerrum = 332.0637*unit.angstroms / simu.epsilon
+print("Bjerrum length  ", simu.l_Bjerrum / T_unitless)
+simu.kappa = unit.sqrt (4*3.14159 * simu.l_Bjerrum * 2*simu.Kconc*6.022e-7 / (T_unitless * unit.angstrom**3))
+print("kappa   ", simu.kappa)
+
+forcefield = app.ForceField('SOP_IDP2.xml')
+topology = None
+positions = None
+
+if args.sequence != None:
+    print("Building from sequence %s ..." % args.sequence)
+    topology, positions = build.build_by_seq(args.sequence, forcefield)
 else:
-    try:
-        ionic_concentration = float(eval(ionic_concentration))  # Evaluate the string expression and convert to float
-    except (SyntaxError, NameError, TypeError, ValueError):
-        # Handle the case where the value cannot be evaluated or converted
-        # Set a default value or raise an exception, depending on your requirement
-        ionic_concentration = None  # or set a default value
+    print("Need sequence !!!")
+    sys.exit()
 
-# Now you have the ionic_concentration variable as an integer or float, or None if it couldn't be evaluated or converted.
+system = forcefield.createSystem(topology)
 
-fepsw = lambda T : 5321/T+233.76-0.9297*T+0.1417*1e-2*T*T-0.8292*1e-6*T**3 #temperature dependent dielectric constant of water	
-epsw = fepsw(T_Kelvin) # dielectric constant of water at T 	
-lB = (1.6021766**2/(4*np.pi*8.854188*epsw))*(6.022*1000/KT)/4.184 # Bjerrum length in nm	
-#lB = (1.6021766**2/(4*np.pi*8.854188*80))*(6.022*1000/KT)/4.184 #  Bjerrum length in nm	
+force.add_bond_force (topology, system, 0)
+force.add_exV_force  (topology, system, 1)
+force.add_DH_force   (topology, system, simu, 2)
+force.add_statistical_force (topology, system, 3)
+totalforcegroup = 3
 
-yukawa_eps = lB*KT	
-yukawa_kappa = np.sqrt(8*np.pi*lB*ionic_concentration*6.022/10)	
+integrator = omm.LangevinIntegrator(simu.temp, 0.5/unit.picosecond, 10*unit.femtoseconds)
+simulation = app.Simulation(topology, system, integrator)
 
-# ========================= System Parameters =======================================
-fi_sys = open("System_Parameters.dat", "w")
-fi_sys.write("Parameters and Constants ============================\n")
-fi_sys.write("Number of particles: %d\n" % ParticleN)
-fi_sys.write("Box length (nm): %f\n" % BOX_L)
-fi_sys.write("Temperature (K): %d\n" % T_Kelvin)
-fi_sys.write("LJ epsilon (kCal/mol): %f\n" % EPSILON)
-fi_sys.write("Gas constant*T (kCal/mol): %f\n" % KT)
-fi_sys.write(f"Dielectric constant of water at T={T_Kelvin}: %f\n" % epsw)
-fi_sys.write("Bjerrum length (nm): %f\n" % lB)
-fi_sys.write("Ionic concentration (M): %f\n" % ionic_concentration)
-fi_sys.write("Yukawa epsilon (nm kCal/mol): %f\n" % yukawa_eps)
-fi_sys.write("Yukawa kappa (nm^-1): %f\n" % yukawa_kappa)
-fi_sys.write("=================================================== \n")
-fi_sys.close()
-# ====================================================================================
+simulation.context.setPositions(positions)
+print("Initial energy   %f   kcal/mol" % (simulation.context.getState(getEnergy=True).getPotentialEnergy() / unit.kilocalorie_per_mole))
 
-TIME_STEP = 0.01 # in picoseconds given current units
-nwrite = 1000 # Frequency of saving configurations
+state = simulation.context.getState(getPositions=True)
+app.PDBFile.writeFile(topology, state.getPositions(), open("input.pdb", "w"), keepIds=True)
 
-Rouse_Steps = int((5*(ParticleN)**2.2)/TIME_STEP)
-Run_Steps = Rouse_Steps
-#Rouse_Steps = 1000000
-#Run_Steps = 20000000
+simulation.context.setVelocitiesToTemperature(simu.temp)
+simulation.step(equilibrium_steps)
+simulation.reporters.append(app.PDBReporter(args.traj, args.frequency))
+simulation.reporters.append(app.StateDataReporter(args.output, args.frequency, elapsedTime=True, step=True, speed=True, progress=True, potentialEnergy=True, kineticEnergy=True, totalEnergy=True, temperature=True, remainingTime=True, totalSteps=simu.Nstep, separator=','))
 
-seed = np.random.randint(5000)
-print ("Seed for the Run:", seed)
-
-# ========================= Particles Connection Initialization =======================================
-bond_gr=[]
-for i in range(ParticleN-1):
-	a_bond=[]
-	a_bond.append(i)
-	a_bond.append(i+1)
-	bond_gr.append(a_bond)
-
-angle_gr=[]	
-for i in range(ParticleN-2):
-	a_angle=[]
-	a_angle.append(i)
-	a_angle.append(i+1)
-	a_angle.append(i+2)
-	angle_gr.append(a_angle)
-	
-# ========================= System Initialization =======================================
-system=gsd.hoomd.Snapshot()
-
-aakeys = np.loadtxt('stats_module.dat', dtype=str, usecols=(0), unpack=True)
-aakeys_mass = np.loadtxt('stats_module.dat', usecols=(1), unpack=True)
-aakeys_chgs = np.loadtxt('stats_module.dat', usecols=(2), unpack=True)
-aakeys_sigmas = np.loadtxt('stats_module.dat', usecols=(3), unpack=True)
-aakeys_sigmas_scaled = aakeys_sigmas/10. # Angstrom to nm
-aakeys_lambdas = np.loadtxt('stats_module.dat', usecols=(4), unpack=True)
-aavalues = np.loadtxt('chain_param.dat', usecols=(1,2,3,4,5), unpack=True)
-
-# Box description
-system.configuration.dimensions = dimen
-system.configuration.box = [BOX_L,BOX_L,BOX_L,0,0,0]
-
-# Particle description
-system.particles.N = ParticleN
-system.particles.position = np.loadtxt(str(ParticleN))
-system.particles.types = aakeys
-system.particles.typeid = aavalues[0].astype(int)
-system.particles.mass = aavalues[1]
-system.particles.charge = aavalues[2]
-
-# Bond description
-system.bonds.N = ParticleN-1
-system.bonds.types = ['AA_bond']
-system.bonds.group = bond_gr
-
-# Angle description
-system.angles.N = ParticleN-2
-system.angles.types = ['AA_angle']
-system.angles.group = angle_gr
-
-# Write intial chain config into gsd file
-fi_start = gsd.hoomd.open(name='Start_Config.gsd', mode='wb')
-fi_start.append(system)
-#fi_start.close()
-
-system = hoomd.init.read_gsd('Start_Config.gsd')
-
-# ========================= Neighbor List =======================================
-#nl = hoomd.md.nlist.cell(); # Change to tree for large box size
-nl = hoomd.md.nlist.tree();
-
-# ========================= Force Fields =======================================
-# Custom Ashbaugh Potential
-lj1 = hoomd.md.pair.lj(r_cut=3.5, nlist=nl, name="1")
-lj2 = hoomd.md.pair.lj(r_cut=3.5, nlist=nl, name="2")
-
-# Harmonic Bonds
-harmonic=hoomd.md.bond.harmonic()
-#harmonic.bond_coeff.set('AA_bond', k=8033, r0=0.38) # k in kJ/mol/nm^2 and r0 in nm
-harmonic.bond_coeff.set('AA_bond', k=1920, r0=0.38) # k in kCal/mol/nm^2 and r0 in nm
-
-
-# FENE Potential
-#fene = hoomd.md.bond.fene()
-#fene.bond_coeff.set('AA_bond', k=30.0, r0=1.5, sigma=1.0, epsilon= 0.0)
-		
-# Angle Potential: 
-# V = k[1-cos(theta - theta0)], where theta0 = np.pi
-# Force: T = - dV/d(theta)
-
-#def bend_pot(theta, kappa):
-#	V = kappa * (1.0+np.cos(theta));
-#	T = kappa*np.sin(theta);
-#	return (V,T)
-
-#btable = hoomd.md.angle.table(width=1000)
-#btable.angle_coeff.set('AA_angle', func=bend_pot, coeff=dict(kappa=kappa))
-
-# Electrostatics
-yukawa = hoomd.md.pair.yukawa(r_cut=3.5, nlist=nl)
-
-# ========================= Pair Coefficients =======================================
-for i in range (len(aakeys)):
-	for j in range (len(aakeys)):
-		sig_eff = 0.5*(aakeys_sigmas_scaled[i] + aakeys_sigmas_scaled[j]) 
-		lambda_eff = 0.5*(aakeys_lambdas[i] + aakeys_lambdas[j]) 
-		#print (i, j, aakeys[i], aakeys[j], sig_eff, lambda_eff)
-
-		lj1.pair_coeff.set(aakeys[i], aakeys[j], epsilon=EPSILON*(1-lambda_eff), sigma=sig_eff, r_cut=(2**(1./6))*sig_eff)
-		lj2.pair_coeff.set(aakeys[i], aakeys[j], epsilon=EPSILON*lambda_eff, sigma=sig_eff, r_cut=3.5)
-  
-		yukawa.pair_coeff.set(aakeys[i], aakeys[j], epsilon=yukawa_eps*aakeys_chgs[i]*aakeys_chgs[j], kappa=yukawa_kappa, r_cut=3.5)
-
-lj1.set_params(mode='shift')
-yukawa.set_params(mode='shift')
-nl.reset_exclusions(exclusions = ['bond']);
-
-# ========================= MD Integrator =======================================
-hoomd.md.integrate.mode_standard(dt=TIME_STEP);
-all = hoomd.group.all();
-integrator = hoomd.md.integrate.langevin(group=all, kT=KT, seed=seed, noiseless_t=False, noiseless_r=False)
-
-for i,aa in enumerate(aakeys):
-	GAMMA = aakeys_mass[i]/1000.
-	integrator.set_gamma_r(aa, gamma_r=GAMMA)
-	
-# ========================= Warmup Run =======================================
-hoomd.run(Rouse_Steps, quiet=True);
-hoomd.dump.gsd("Equilibration_Config.gsd", period=nwrite, group=all, overwrite=True);
-integrator.disable()
-
-# ========================= MD Integrator =======================================
-hoomd.md.integrate.mode_standard(dt=TIME_STEP);
-all = hoomd.group.all();
-integrator = hoomd.md.integrate.langevin(group=all, kT=KT, seed=seed, noiseless_t=False, noiseless_r=False)
-for i,aa in enumerate(aakeys):
-	GAMMA = aakeys_mass[i]/1000.
-	integrator.set_gamma_r(aa, gamma_r=GAMMA)
-
-# ========================= Print Thrmodynamic Quantities =======================================
-#hoomd.analyze.log(filename="mddata.dat",quantities=['potential_energy','kinetic_energy','pair_lj_energy','bond_fene_energy', 'temperature'],period=10*nwrite,overwrite=True);
-#hoomd.analyze.log(filename="mddata.dat",quantities=['potential_energy','kinetic_energy','pair_ashbaugh_energy','bond_harmonic_energy','pair_yukawa_energy', 'temperature'],period=10*nwrite,overwrite=True);
-hoomd.analyze.log(filename="mddata.dat",quantities=['potential_energy','kinetic_energy','bond_harmonic_energy','pair_yukawa_energy', 'temperature'],period=10*nwrite,overwrite=True);
-
-# ========================= Trajectory Print for Movie =======================================
-hoomd.dump.gsd("Running_Config.gsd", period=nwrite, group=all, overwrite=True);
-#hoomd.dump.dcd(filename="Running_Config.dcd", period=nwrite)
-
-# ========================= Run Steps =======================================
-hoomd.run(Run_Steps);
-
-# ========================= Run Analysis =======================================
-#os.system("python3 config_analysis.py")
-
+print('Running simulation ...')
+t0 = time.time()
+simulation.step(steps_left)
+prodtime = time.time() - t0
+print("Simulation speed: % .2e steps/day" % (86400*steps_left/(prodtime)))
