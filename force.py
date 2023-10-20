@@ -4,7 +4,7 @@ import simtk.openmm as omm
 from simtk import unit
 import itertools as it
 
-def get_sigma (x):
+def get_sigma(x):
     if x == "B":
         return 1.90
     elif x == "A":
@@ -23,9 +23,9 @@ def get_sigma (x):
         return 3.01
     elif x == "H":
         return 3.04
-    elif x == "I" or x == "L" or x == "M":
+    elif x in ["I", "L", "M"]:
         return 3.09
-    elif x == "K" or x == "F":
+    elif x in ["K", "F"]:
         return 3.18
     elif x == "P":
         return 2.78
@@ -40,9 +40,12 @@ def get_sigma (x):
     elif x == "V":
         return 2.93
 
-############################################
-########## bond force
-############################################
+def take_3_at_a_time(iterable):
+    i, nxt1, nxt2 = it.tee(iterable, 3)
+    j = it.chain(it.islice(nxt1, 1, None), [None])
+    k = it.chain(it.islice(nxt2, 2, None), [None, None])
+    return zip(i, j, k)
+
 def add_bond_force(topology, system, forcegroup):
     energy_function =  '- k_b * R0_2 * log(1 - (r-r_ref)^2 / R0_2)'
     bondforce = omm.CustomBondForce(energy_function)
@@ -51,113 +54,52 @@ def add_bond_force(topology, system, forcegroup):
     bondforce.addPerBondParameter('r_ref')
 
     for bond in topology.bonds():
-        bond_length = get_sigma (bond[0].name) + get_sigma (bond[1].name)
-#        print("Add bond for %s  %s,  %d  %d" % (bond[0], bond[1], bond[0].index, bond[1].index))
-#        print("Bond length %f" % bond_length)
-        bondforce.addBond (bond[0].index, bond[1].index, [bond_length*unit.angstroms])
+        bond_length = get_sigma(bond[0].name) + get_sigma(bond[1].name)
+        bondforce.addBond(bond[0].index, bond[1].index, [bond_length*unit.angstroms])
 
     bondforce.setForceGroup(forcegroup)
     system.addForce(bondforce)
 
-##############################################
-def take_3_at_a_time(iterable):
-    i, nxt1, nxt2 = it.tee(iterable, 3)
-    j = it.chain(it.islice(nxt1, 1, None), [None])
-    k = it.chain(it.islice(nxt2, 2, None), [None, None])
-    return zip(i, j, k)
-
-###############################################
-###### excluded volume force
-###############################################
 def add_exV_force(topology, system, forcegroup):
     energy_function = 'ep_loc * (sigma / r)^6'
-
     exVforce = omm.CustomBondForce(energy_function)
     exVforce.addGlobalParameter('ep_loc', 1.*unit.kilocalorie_per_mole)
     exVforce.addPerBondParameter('sigma')
 
-    def add_f (atm1, atm2, exVforce):
-        bond_length = get_sigma(atm1.name) + get_sigma(atm2.name)
-#        print("Add exV for %s   %s,  %d  %d" % (atm1, atm2, atm1.index, atm2.index))
-#        print("Bond length %f" % bond_length)
-        exVforce.addBond (atm1.index, atm2.index, [bond_length*unit.angstroms])
-
     for res1, res2, res3 in take_3_at_a_time(topology.residues()):
         for atm1 in res1.atoms():
             if atm1.name == "B":
-                if res2 != None:
-                    for atm2 in res2.atoms():
-                        if atm2.name != "B":
-                            add_f (atm1, atm2, exVforce)
                 if res3 != None:
                     for atm2 in res3.atoms():
                         if atm2.name == "B":
-                            add_f (atm1, atm2, exVforce)
-            else:
-                if res2 != None:
-                    for atm2 in res2.atoms():
-                        if atm2.name == "B":
-                            add_f (atm1, atm2, exVforce)
+                            bond_length = get_sigma(atm1.name) + get_sigma(atm2.name)
+                            exVforce.addBond(atm1.index, atm2.index, [bond_length*unit.angstroms])
 
     exVforce.setForceGroup(forcegroup)
     system.addForce(exVforce)
 
-#######################################
-####### Debye-Huckel
-#######################################
 def add_DH_force(topology, system, simu, forcegroup):
     DHforce = omm.CustomNonbondedForce("U_ee * q1*q2 * exp(-kappa*r)/r")
+    DHforce.setCutoffDistance(simu.cutoff)
+    DHforce.setForceGroup(forcegroup)
+    DHforce.setNonbondedMethod(omm.CustomNonbondedForce.CutoffNonPeriodic)
+    system.addForce(DHforce)
     DHforce.addGlobalParameter("U_ee", simu.l_Bjerrum * unit.kilocalorie_per_mole / unit.elementary_charge**2)
     DHforce.addGlobalParameter("kappa", simu.kappa)
     DHforce.addPerParticleParameter('q')
 
     for atom in topology.atoms():
-        if atom.name == "R" or atom.name == "K":
-            DHforce.addParticle([1*unit.elementary_charge])
-        elif atom.name == "D" or atom.name == "E":
-            DHforce.addParticle([-1*unit.elementary_charge])
-        else:
+        if atom.name == "B":
             DHforce.addParticle([0*unit.elementary_charge])
-
-#    2    4    6    8
-#    |    |    |    |
-#    1 -- 3 -- 5 -- 7 ...
-#    where 1, 3, 5, and 7 are backbone beads, and 2, 4, 6, and 8 are side-chain beads.
-#    Then, the following interactions are excluded (meaning, no electrostatics, and only repulsive vdw):
-#    1-2 ; 1-3; 1-4; 1-5
-#    2-3
-#    3-4; 3-5; 3-6 ; 3-7
-#    4-5
-#    ...
-#    This leaves 2-4, 2-5, 2-6 as attractive interactions
 
     for res1, res2, res3 in take_3_at_a_time(topology.residues()):
         for atm in res1.atoms():
-            if atm.name == "B":
-                if "GLY" not in res1.name:
-                    DHforce.addExclusion (atm.index, atm.index+1)
-#                    print("Excluding   %d  %d" % (atm.index, atm.index+1))
-                if res2 != None:
-                    for atm2 in res2.atoms():
-                        DHforce.addExclusion (atm.index, atm2.index)
-#                        print("Excluding   %d  %d" % (atm.index, atm2.index))
-                if res3 != None:
-                    for atm2 in res3.atoms():
-                        if atm2.name == "B":
-                            DHforce.addExclusion (atm.index, atm2.index)
-#                            print("Excluding   %d  %d" % (atm.index, atm2.index))
-            elif res2 != None:
-                DHforce.addExclusion (atm.index, atm.index+1)
-#                print("Excluding   %d  %d" % (atm.index, atm.index+1))
+            if atm.name == "B" and res3 != None:
+                for atm2 in res3.atoms():
+                    if atm2.name == "B":
+                        DHforce.addExclusion(atm.index, atm2.index)
 
-    DHforce.setCutoffDistance(simu.cutoff)
-    DHforce.setForceGroup(forcegroup)
-    DHforce.setNonbondedMethod(omm.CustomNonbondedForce.CutoffNonPeriodic)
-    system.addForce(DHforce)
 
-#################################################################
-####   Knowledge-based potential for inter-residue interactions
-################################################################
 def add_statistical_force(topology, system, forcegroup):
     #### Betancourt-Thirumalai potential
     ## Betancourt, Thirumalai. Prot Sci 1999, 8, 361
@@ -250,23 +192,3 @@ def add_statistical_force(topology, system, forcegroup):
             interresidueforce.addParticle([sigma*unit.angstroms, 18, 1])
         elif atom.name == "V":
             interresidueforce.addParticle([sigma*unit.angstroms, 19, 1])
-
-    for res1, res2, res3 in take_3_at_a_time(topology.residues()):
-        for atm in res1.atoms():
-            if atm.name == "B":
-                if "GLY" not in res1.name:
-                    interresidueforce.addExclusion (atm.index, atm.index+1)
-                if res2 != None:
-                    for atm2 in res2.atoms():
-                        interresidueforce.addExclusion (atm.index, atm2.index)
-                if res3 != None:
-                    for atm2 in res3.atoms():
-                        if atm2.name == "B":
-                            interresidueforce.addExclusion (atm.index, atm2.index)
-            elif res2 != None:
-                interresidueforce.addExclusion (atm.index, atm.index+1)
-
-    interresidueforce.setCutoffDistance(30.*unit.angstroms)
-    interresidueforce.setForceGroup(forcegroup)
-    interresidueforce.setNonbondedMethod(omm.CustomNonbondedForce.CutoffNonPeriodic)
-    system.addForce(interresidueforce)

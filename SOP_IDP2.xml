@@ -6,102 +6,88 @@
     <Residue name="ALA">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="ARG">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="ASN">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="ASP">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="CYS">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="GLU">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="GLN">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="GLY">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="HIS">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="ILE">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="LEU">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="LYS">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="MET">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="PHE">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="PRO">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="SER">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="THR">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="TRP">
       <Atom name="B" type="1"/>
-      <ExternalBond atomName="B"/>
       <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="TYR">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
     </Residue>
     <Residue name="VAL">
       <Atom name="B" type="1"/>
       <ExternalBond atomName="B"/>
-      <ExternalBond atomName="B"/>
+    </Residue>
+    <Residue name="GLYT">
+      <Atom name="B" type="1"/>
+    </Residue>
+    <Residue name="CYST">
+      <Atom name="B" type="1"/>
     </Residue>
   </Residues>
 </ForceField>
