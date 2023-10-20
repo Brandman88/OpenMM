@@ -7,6 +7,8 @@ import argparse
 import build
 import force
 import pandas as pd
+import math
+
 
 def read_entire_csv_return_dict(dest_required_file_csv = "data_multi.csv"):
     '''Define function to read entire CSV and return a dictionary.'''
@@ -253,6 +255,20 @@ state = simulation.context.getState(getPositions=True)
 app.PDBFile.writeFile(topology, state.getPositions(), open("input.pdb", "w"), keepIds=True)
 
 simulation.context.setVelocitiesToTemperature(simu.temp)
+
+# After system creation and before starting the simulation
+state = simulation.context.getState(getEnergy=True, getForces=True)
+potential_energy = state.getPotentialEnergy()
+forces = state.getForces()
+
+force_magnitudes = [force.value_in_unit(unit.kilojoule_per_mole/unit.nanometer) for force in forces]
+max_force_magnitude = max([math.sqrt(f[0]**2 + f[1]**2 + f[2]**2) for f in force_magnitudes])
+
+
+print("Initial Potential Energy:", potential_energy)
+print("Maximum Force Magnitude:", max_force_magnitude)
+
+
 simulation.step(equilibrium_steps)
 simulation.reporters.append(app.PDBReporter(args.traj, args.frequency))
 simulation.reporters.append(app.StateDataReporter(args.output, args.frequency, elapsedTime=True, step=True, speed=True, progress=True, potentialEnergy=True, kineticEnergy=True, totalEnergy=True, temperature=True, remainingTime=True, totalSteps=simu.Nstep, separator=','))
